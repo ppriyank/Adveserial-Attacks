@@ -1,0 +1,5 @@
+Hello, I wish to buy a bottle of wine.
+Hi, yes. What kind of wine would you like?
+I don't know. Sorry, I don't know much about wine.
+That's no problem at all. What's the occasion and how much would you like to spend?
+It's for my boss. It's his birthday. I know he likes wine, but I don't know what type. I also do not want anything too expensive, maybe mid-range.
