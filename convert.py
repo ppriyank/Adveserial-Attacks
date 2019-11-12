@@ -15,6 +15,7 @@ for (dirpath, dirnames, filenames) in os.walk("audio-dataset/"):
                 wav_filename = filename.replace(file_extension_final, 'wav')
                 wav_path = dirpath + '/' + wav_filename
                 print('CONVERTING: ' + str(filepath))
+                track = track.set_channels(1)
                 file_handle = track.export(wav_path, format='wav')
                 os.remove(filepath)
             except:
