@@ -2,18 +2,17 @@
 
 `pip install -r requirements.txt`
 
-for using : `scikits.audiolab`    
-do :  `brew install libsndfile`  
+
+
+## Audio  Theory :  
+* [Noises](https://github.com/jfsantos/maracas/blob/master/maracas/maracas.py)  
+* [FFT & Audio Manipulation](https://timsainburg.com/noise-reduction-python.html)  
+* [pydub](https://github.com/jiaaro/pydub)   
+* [librosa Manipulations](https://librosa.github.io/librosa/generated/librosa.effects.preemphasis.html)  
 
 
 
 
-Theory :  
-https://github.com/jfsantos/maracas/blob/master/maracas/maracas.py  
 
-https://timsainburg.com/noise-reduction-python.html  
 
-https://github.com/jiaaro/pydub  
-
-https://librosa.github.io/librosa/generated/librosa.effects.preemphasis.html  
 
