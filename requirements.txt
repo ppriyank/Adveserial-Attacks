@@ -1,3 +1,4 @@
 pydub
 ffmpy
-librosa
+librosac
+clarifai
