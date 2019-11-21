@@ -20,3 +20,23 @@ for (dirpath, dirnames, filenames) in os.walk("audio-dataset/"):
                 os.remove(filepath)
             except:
                 print("ERROR CONVERTING " + str(filepath))
+
+
+formats_to_convert = ['.flac']
+
+for (dirpath, dirnames, filenames) in os.walk("short-audio/"):
+    for filename in filenames:
+        if filename.endswith(tuple(formats_to_convert)):
+            filepath = dirpath + '/' + filename
+            (path, file_extension) = os.path.splitext(filepath)
+            file_extension_final = file_extension.replace('.', '')
+            try:
+                track = AudioSegment.from_file(filepath,file_extension_final)
+                wav_filename = filename.replace(file_extension_final, 'wav')
+                wav_path = dirpath + '/' + wav_filename
+                print('CONVERTING: ' + str(filepath))
+                track = track.set_channels(1)
+                file_handle = track.export(wav_path, format='wav')
+                os.remove(filepath)
+            except:
+                print("ERROR CONVERTING " + str(filepath))
