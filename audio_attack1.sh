@@ -9,7 +9,7 @@ for file in short-audio/*.wav
 do
   echo "$file"
   python3 classify.py --in $file --restore_path deepspeech-0.4.1-checkpoint/model.v0.4.1
-  python3 attack.py --in $file --target "this is a test" --out $file --iterations 1000 --restore_path deepspeech-0.4.1-checkpoint/model.v0.4.1
+  python3 attack.py --in $file --target "this is a test" --out output2/$file --iterations 1000 --restore_path deepspeech-0.4.1-checkpoint/model.v0.4.1
   python3 classify.py --in $file --restore_path deepspeech-0.4.1-checkpoint/model.v0.4.1
 done
 
