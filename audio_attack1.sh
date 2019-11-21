@@ -1,5 +1,6 @@
-module load cudnn/10.0v7.6.2.24
 module load cuda/10.1.105
+module load cudnn/10.0v7.6.2.24
+
 
 conda activate audio
 cd /home/xl2700/p2/audio_adversarial_examples
