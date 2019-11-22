@@ -3,8 +3,10 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+from warpctc_pytorch import CTCLoss
 
 from scipy.io import wavfile
+from model import DeepSpeech, supported_rnns
 
 parser = argparse.ArgumentParser(description='idk :P')
 parser.add_argument('-t', '--target-phrase', type=str, default='testing')
@@ -34,8 +36,31 @@ print(maxlen , target_phrase , lengths)
 
 
 
+# audio_conf = dict(sample_rate=args.sample_rate,
+#                   window_size=args.window_size,
+#                   window_stride=args.window_stride,
+#                   window=args.window,
+#                   noise_dir=args.noise_dir,
+#                   noise_prob=args.noise_prob,
+#                   noise_levels=(args.noise_min, args.noise_max))
+
+# rnn_type = args.rnn_type.lower()
+# assert rnn_type in supported_rnns, "rnn_type should be either lstm, rnn or gru"
+# model = DeepSpeech(rnn_hidden_size=args.hidden_size,
+#                    nb_layers=args.hidden_layers,
+#                    labels=labels,
+#                    rnn_type=supported_rnns[rnn_type],
+#                    audio_conf=audio_conf,
+#                    bidirectional=args.bidirectional)
+
+
+
+
 def DB(x):
 	return 20 * torch.max(x).log().clamp(min=-5.0) / torch.log(torch.tensor(10.0))
+
+
+    
 
 
 
