@@ -12,10 +12,13 @@ Installation :
 Set up a Audio to Speech (ASR) model first   (if you get stuck with the error of linker Read Troble shooting below (`python setup.py install`) ) 
 [GITHUB](https://github.com/SeanNaren/deepspeech.pytorch)  
 
+Note you need : CTCLoss as well
+
 
 Download a pretrained model : `librispeech_pretrained_v2.pth`   
 librispeech short 10 seconds audio clips : [here](https://github.com/ppriyank/Adveserial-Attacks/tree/master/audio-dataset/short-audio)  
 Evaluate : `python transcribe.py --model-path saved_model/... --audio-path ../../../xyz.wav`   
+
 
 
 ## Troubleshooting 
