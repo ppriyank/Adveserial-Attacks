@@ -1,0 +1,5 @@
+torchaudio
+python-levenshtein
+visdom
+wget
+librosa
