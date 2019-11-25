@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser(description='idk :P')
 parser.add_argument('-t', '--target-phrase', type=str, default='testing')
 parser.add_argument('-x', '--input-audio-paths', type=list, default=[c for c in '[/scratch/pp1953/short-audio/2.wav]'])
 parser.add_argument('-mp', '--model-path', type=str, default="saved_model/librispeech_pretrained_v2.pth")
-parser.add_argument('-gpu', '--gpu-devices', type=int, default=0)
+parser.add_argument('-gpu', '--gpu-devices', type=str, default="0")
 parser.add_argument('--num-iterations', type=int, default=5000)
 
 
@@ -30,9 +30,9 @@ args = parser.parse_args()
 
 
 
-print(args)
+# print(args)
 args.input_audio_paths = ("".join(args.input_audio_paths[1:-1])).split(",")
-print(args.input_audio_paths)
+# print(args.input_audio_paths)
 
 # Read audios 
 audios = []
@@ -49,11 +49,12 @@ package = torch.load(args.model_path, map_location=lambda storage, loc: storage)
 model = DeepSpeech.load_model_package(package)
 labels = model.labels
 audio_conf = model.audio_conf
-model.eval()
+# model.eval()
 
 use_gpu = torch.cuda.is_available()
 cuda = 0 
 if use_gpu:
+	print("USING GPUS :D :D :D ")
 	os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_devices
 	cuda=1
 
@@ -74,13 +75,6 @@ final_deltas = [None] * len(audios)
 model.to(device)
 
 
-if cuda:
-	model, optimizer = amp.initialize(model, optimizer,
-		                                      opt_level='O1',
-		                                      keep_batchnorm_fp32=None,
-		                                      loss_scale=1.0)
-
-
 
 labels_map = dict([(labels[i], i) for i in range(len(labels))])
 
@@ -95,11 +89,6 @@ class Noise_model(nn.Module):
         self.rescale = 1
 
     def forward(self, x, debug= False):
-        """
-        Args:
-            x: feature matrix with shape (batch_size, feat_dim).
-            labels: ground truth labels with shape (batch_size).
-        """
         if debug == True:
         	return x
         apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
@@ -130,7 +119,7 @@ for i in range(len(audios)):
 	# import pdb
 	# pdb.set_trace()
 	audio = audios[i]
-	original = torch.FloatTensor(audio)
+	original = torch.FloatTensor(audio).to(device)
 	original.requires_grad= False
 	model.requires_grad = True
 	
@@ -150,10 +139,15 @@ for i in range(len(audios)):
 	print(decoded_output)
 
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
-	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.5)
+	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.01, momentum=0.01, weight_decay=0.01, nesterov=True)
+
+	if cuda:
+		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
+			opt_level='O1',keep_batchnorm_fp32=None,loss_scale=1.0)
 
 	for j in range(args.num_iterations):
-		wave = noise_model(original, False)
+		model.zero_grad()
+		wave = noise_model(original, False).to(device)
 		wave = wave.unsqueeze(0)
 		magnitude, phase = stft.transform(wave)
 		magnitude = magnitude.unsqueeze(0)
@@ -162,8 +156,6 @@ for i in range(len(audios)):
 		mean = temp.mean()
 		std = temp.std()
 		temp = (temp - mean) / std
-		# temp.add_(-mean)
-		# temp.div_(std)
 		input_sizes = torch.IntTensor([temp.size(3)]).int()
 		out, output_sizes = model(temp, input_sizes)
 		if j % 10 == 0 : 
@@ -179,22 +171,22 @@ for i in range(len(audios)):
 		optimizer_noise.zero_grad()
 
 		if use_gpu:
-			with amp.scale_loss(loss, optimizer) as scaled_loss:
+			with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
 			    scaled_loss.backward()
 		else:
 			loss.backward()
 
 		torch.nn.utils.clip_grad_norm_(noise_model.parameters(), 400)
 		optimizer_noise.step()
-		
+		print("Epoch {} Loss: {:.6f}".format( j,  loss))
 		if j % 10 == 0 :
 			print("Epoch {} Loss: {:.6f}".format( j,  loss))
 			print("decoded_output: %s"%(decoded_output[0][0]))
 
+		for g in optimizer_noise.param_groups:
+		    g['lr'] = g['lr'] / 1.1
 
 
-# for g in optimizer.param_groups:
-#     g['lr'] = g['lr'] / 1.1
 
 # print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
 
