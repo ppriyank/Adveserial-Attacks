@@ -155,7 +155,7 @@ for i in range(len(audios)):
 		temp = torch.log(magnitude + 1)
 		mean = temp.mean()
 		std = temp.std()
-		temp = (temp - mean) / std
+		temp = (temp - mean) / (std + 1e-6)
 		input_sizes = torch.IntTensor([temp.size(3)]).int()
 		out, output_sizes = model(temp, input_sizes)
 		if j % 10 == 0 : 
@@ -176,7 +176,11 @@ for i in range(len(audios)):
 		else:
 			loss.backward()
 
-		torch.nn.utils.clip_grad_norm_(noise_model.parameters(), 400)
+		for  param in noise_model.parameters():
+			print(param.grad)
+		torch.nn.utils.clip_grad_value_(noise_model.parameters(), 400)
+		for  param in noise_model.parameters():
+			print(param.grad)
 		optimizer_noise.step()
 		print("Epoch {} Loss: {:.6f}".format( j,  loss))
 		if j % 10 == 0 :
