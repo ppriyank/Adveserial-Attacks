@@ -19,6 +19,7 @@ from model import DeepSpeech, supported_rnns
 from decoder import GreedyDecoder
 from utils import reduce_tensor, check_loss
 
+from data.data_loader import load_audio
 
 parser = argparse.ArgumentParser(description='idk :P')
 parser.add_argument('-t', '--target-phrase', type=str, default='testing')
@@ -39,7 +40,7 @@ print(args.input_audio_paths)
 audios = []
 lengths = []
 for path in args.input_audio_paths: 
-	rate, data = wavfile.read(path)
+	data = load_audio(path)
 	audios.append(list(data))
 	lengths.append(len(data))
 
@@ -87,7 +88,7 @@ mask = torch.tensor(mask).float()
 
 final_deltas = [None] * batch_size
 original = torch.tensor(np.array(audios)).float()
-criterion = nn.CTCLoss()
+
 
 
 
@@ -117,23 +118,31 @@ n_fft = int(sample_rate * window_size)
 win_length = n_fft
 hop_length = int(sample_rate * window_stride)
         
-stft = STFT(filter_length=n_fft,  hop_length=hop_length, win_length=n_fft,window='hann').to(device)
 
+stft = STFT(filter_length=n_fft,  hop_length=hop_length, win_length=win_length,window='hamming').to(device)
+data = load_audio(path)
 audio = torch.FloatTensor(data)
 audio = audio.unsqueeze(0)
 magnitude, phase = stft.transform(audio)
 magnitude = magnitude.unsqueeze(0)
 magnitude = magnitude.to(device)
 
+temp = torch.log(magnitude + 1)
+mean = temp.mean()
+std = temp.std()
+temp.add_(-mean)
+temp.div_(std)
 
-input_sizes = torch.IntTensor([magnitude.size(3)]).int()
-out, output_sizes = model(magnitude, input_sizes)
+
+input_sizes = torch.IntTensor([temp.size(3)]).int()
+out, output_sizes = model(temp, input_sizes)
 
 decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
 decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 
 transcript_path = "/scratch/pp1953/short-audio/2.txt"
 labels_map = dict([(labels[i], i) for i in range(len(labels))])
+
 
 labels_path = "labels.json"
 with open(labels_path) as label_file:
@@ -144,16 +153,20 @@ with open(transcript_path, 'r', encoding='utf8') as transcript_file:
 	transcript = transcript_file.read().replace('\n', '')
 
 
-transcript = list(filter(None, [labels_map.get(x) for x in list(transcript)]))
+int_transcript = list(filter(None, [labels_map.get(x) for x in list(transcript)]))
+
 out = out.transpose(0, 1)  # TxNxH
 float_out = out.float()  # ensure float32 for loss
 
 targets=[]
-targets.extend(transcript)
+targets.extend(int_transcript)
 targets = torch.IntTensor(targets)
-target_sizes = torch.IntTensor(batch_size)
-
+target_sizes = torch.IntTensor(1)
 target_sizes[0]= len(transcript)
+
+criterion = nn.CTCLoss()
+loss = criterion(float_out, targets, output_sizes, target_sizes).to(device)
+
 
 
 loss = criterion(float_out, targets, output_sizes, target_sizes).to(device)
