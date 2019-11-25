@@ -216,13 +216,4 @@ avg_loss = 0
 
 
 
-# 
-# audios = [data1,data1]
-
-
-# maxlen = len(data1)
-
-# print(args)
-
-
 # python main.py -x=[/scratch/pp1953/short-audio/1.wav,/scratch/pp1953/short-audio/2.wav,/scratch/pp1953/short-audio/3.wav] -t "test"
