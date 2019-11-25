@@ -25,6 +25,7 @@ parser.add_argument('-mp', '--model-path', type=str, default="saved_model/libris
 parser.add_argument('-gpu', '--gpu-devices', type=int, default=0)
 parser.add_argument('--num-iterations', type=int, default=5000)
 
+
 args = parser.parse_args()
 
 
@@ -38,82 +39,29 @@ audios = []
 lengths = []
 for path in args.input_audio_paths: 
 	data = load_audio(path)
-	audios.append(list(data))
+	audios.append(data)
 	lengths.append(len(data))
 
 
-maxlen = max(map(len,audios))
-audios = np.array([x+[0]*(maxlen-len(x)) for x in audios])
-target_phrase = args.target_phrase
-
-
-print(maxlen , target_phrase , lengths)
-
-
-
-
+target_phrase = args.target_phrase.upper()
 print("Loading checkpoint model %s" % args.model_path)
 package = torch.load(args.model_path, map_location=lambda storage, loc: storage)
 model = DeepSpeech.load_model_package(package)
 labels = model.labels
 audio_conf = model.audio_conf
-model.train()
+model.eval()
 
-def DB(x):
-	return 20 * torch.max(x).log().clamp(min=-5.0) / torch.log(torch.tensor(10.0))
-
-
-
-batch_size = len(audios)
 use_gpu = torch.cuda.is_available()
 cuda = 0 
-noise = nn.Parameter(torch.rand(batch_size, maxlen))
 if use_gpu:
 	os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_devices
-	noise.cuda()
 	cuda=1
-
 
 
 device = torch.device("cuda" if cuda else "cpu")
 torch.manual_seed(1)
+batch_size = 1
 rescale = 1
-model.to(device)
-
-if cuda:
-	model, optimizer = amp.initialize(model, optimizer,
-		                                      opt_level='O1',
-		                                      keep_batchnorm_fp32=None,
-		                                      loss_scale=1.0)
-
-mask = np.array([[1 if i < l else 0 for i in range(maxlen)] for l in lengths])
-mask = torch.tensor(mask).float()
-
-
-final_deltas = [None] * batch_size
-original = torch.tensor(np.array(audios)).float()
-
-
-
-avg_loss = 0 
-# new_input =  self.apply_delta*mask + original
-
-# for i in range(args.num_iterations):
-apply_delta = torch.clamp(noise, min=-2000, max=2000)*rescale
-new_input =  apply_delta*mask + original
-
-
-noise = torch.zeros(batch_size, maxlen)
-noise.data.normal_(0, std=2)
-pass_in = torch.clamp(new_input+noise, min=-2**15, max=2**15-1)
-
-
-
-
-# spect_parser = SpectrogramParser(model.audio_conf, normalize=True)
-
-
-# out, output_sizes = model(pass_in, (batch_size,maxlen))
 
 window_size = audio_conf['window_size']
 sample_rate = audio_conf['sample_rate']
@@ -121,83 +69,134 @@ window_stride = audio_conf['window_stride']
 n_fft = int(sample_rate * window_size)
 win_length = n_fft
 hop_length = int(sample_rate * window_stride)
-        
-
 stft = STFT(filter_length=n_fft,  hop_length=hop_length, win_length=win_length,window='hamming').to(device)
-data = load_audio(path)
-audio = torch.FloatTensor(data)
-audio = audio.unsqueeze(0)
-magnitude, phase = stft.transform(audio)
-magnitude = magnitude.unsqueeze(0)
-magnitude = magnitude.to(device)
-
-temp = torch.log(magnitude + 1)
-mean = temp.mean()
-std = temp.std()
-temp.add_(-mean)
-temp.div_(std)
+final_deltas = [None] * len(audios)
+model.to(device)
 
 
-input_sizes = torch.IntTensor([temp.size(3)]).int()
-out, output_sizes = model(temp, input_sizes)
+if cuda:
+	model, optimizer = amp.initialize(model, optimizer,
+		                                      opt_level='O1',
+		                                      keep_batchnorm_fp32=None,
+		                                      loss_scale=1.0)
 
-decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
-decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
-print(decoded_output)
-transcript_path = "/scratch/pp1953/short-audio/2.txt"
+
+
 labels_map = dict([(labels[i], i) for i in range(len(labels))])
 
+class Noise_model(nn.Module):
+    def __init__(self, batch_size=1, maxlen=None, use_gpu=True):
+        super(Noise_model, self).__init__()
+        self.use_gpu = use_gpu
+        if self.use_gpu:
+            self.noise = nn.Parameter(torch.randn(batch_size, maxlen).cuda())
+        else:
+            self.noise = nn.Parameter(torch.randn(batch_size, maxlen))
+        self.rescale = 1
 
-labels_path = "labels.json"
-with open(labels_path) as label_file:
-            labels = str(''.join(json.load(label_file)))
+    def forward(self, x, debug= False):
+        """
+        Args:
+            x: feature matrix with shape (batch_size, feat_dim).
+            labels: ground truth labels with shape (batch_size).
+        """
+        if debug == True:
+        	return x
+        apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
+        new_input =  apply_delta + original
+        noise = torch.zeros(batch_size, maxlen).to(device)
+        noise.data.normal_(0, std=2)
+        pass_in = torch.clamp(new_input+noise, min=-2**15, max=2**15-1)
+        return pass_in
 
 
-with open(transcript_path, 'r', encoding='utf8') as transcript_file:
-	transcript = transcript_file.read().replace('\n', '')
 
+def DB(x):
+	return 20 * torch.max(x).log().clamp(min=-5.0) / torch.log(torch.tensor(10.0))
 
-int_transcript = list(filter(None, [labels_map.get(x) for x in list(transcript)]))
-
-out = out.transpose(0, 1)  # TxNxH
-float_out = out.float()  # ensure float32 for loss
-
-targets=[]
-targets.extend(int_transcript)
-targets = torch.IntTensor(targets)
-target_sizes = torch.IntTensor(1)
-target_sizes[0]= len(transcript)
 
 criterion = nn.CTCLoss()
 softmax = torch.nn.LogSoftmax(2)
 
-# torch.nn.Softmax(2)(float_out)
-# loss = criterion(float_out, targets, output_sizes, target_sizes).to(device)
-loss = criterion(softmax(float_out), targets, output_sizes, target_sizes).to(device)
-loss = loss.to(device)
-loss_value = loss.item()
-        
+for i in range(len(audios)):
+	print("processing %d-th audio (%s)" %(i+1, args.input_audio_paths[i]))
+	avg_loss = 0 
+	maxlen =lengths[i]
+	noise_model = Noise_model(1,maxlen, cuda)
+	transcript_path = args.input_audio_paths[i][:-3] + "txt"
+	with open(transcript_path, 'r', encoding='utf8') as transcript_file:
+		transcript = transcript_file.read().replace('\n', '')
+	print(transcript)
+	# import pdb
+	# pdb.set_trace()
+	audio = audios[i]
+	original = torch.FloatTensor(audio)
+	original.requires_grad= False
+	model.requires_grad = True
+	
+	original = original.unsqueeze(0)
+	magnitude, phase = stft.transform(original)
+	magnitude = magnitude.unsqueeze(0)
+	magnitude = magnitude.to(device)
+	temp = torch.log(magnitude + 1)
+	mean = temp.mean()
+	std = temp.std()
+	temp.add_(-mean)
+	temp.div_(std)
+	input_sizes = torch.IntTensor([temp.size(3)]).int()
+	out, output_sizes = model(temp, input_sizes)
+	decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
+	decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
+	print(decoded_output)
 
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01,momentum=0.1, nesterov=True, weight_decay=1e-5)
+	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
+	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.5)
 
-optimizer.zero_grad()
-# compute gradient
-loss
-if use_gpu:
-	with amp.scale_loss(loss, optimizer) as scaled_loss:
-	    scaled_loss.backward()
-else:
-	loss.backward()
+	for j in range(args.num_iterations):
+		wave = noise_model(original, False)
+		wave = wave.unsqueeze(0)
+		magnitude, phase = stft.transform(wave)
+		magnitude = magnitude.unsqueeze(0)
+		magnitude = magnitude.to(device)
+		temp = torch.log(magnitude + 1)
+		mean = temp.mean()
+		std = temp.std()
+		temp = (temp - mean) / std
+		# temp.add_(-mean)
+		# temp.div_(std)
+		input_sizes = torch.IntTensor([temp.size(3)]).int()
+		out, output_sizes = model(temp, input_sizes)
+		if j % 10 == 0 : 
+			decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
+			decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
+		out = out.transpose(0, 1)  # TxNxH
+		float_out = out.float()  # ensure float32 for loss
+		targets = torch.tensor(int_transcript , dtype= torch.int32 )
+		target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
+		
+		loss = criterion(softmax(float_out), targets, output_sizes, target_sizes).to(device)
+		loss_value = loss.item()
+		optimizer_noise.zero_grad()
 
-torch.nn.utils.clip_grad_norm_(model.parameters(), 400)
-optimizer.step()
+		if use_gpu:
+			with amp.scale_loss(loss, optimizer) as scaled_loss:
+			    scaled_loss.backward()
+		else:
+			loss.backward()
+
+		torch.nn.utils.clip_grad_norm_(noise_model.parameters(), 400)
+		optimizer_noise.step()
+		
+		if j % 10 == 0 :
+			print("Epoch {} Loss: {:.6f}".format( j,  loss))
+			print("decoded_output: %s"%(decoded_output[0][0]))
 
 
-del loss, out, float_out
-for g in optimizer.param_groups:
-    g['lr'] = g['lr'] / 1.1
 
-print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
+# for g in optimizer.param_groups:
+#     g['lr'] = g['lr'] / 1.1
+
+# print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
 
 
 
