@@ -139,7 +139,7 @@ for i in range(len(audios)):
 	print(decoded_output)
 
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
-	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.01, momentum=0.01, weight_decay=0.01, nesterov=True)
+	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.001, momentum=0.01, weight_decay=0.001, nesterov=True)
 
 	if cuda:
 		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
@@ -152,7 +152,8 @@ for i in range(len(audios)):
 		magnitude, phase = stft.transform(wave)
 		magnitude = magnitude.unsqueeze(0)
 		magnitude = magnitude.to(device)
-		temp = torch.log(magnitude + 1)
+		magnitude = magnitude.clamp(min=1e-12, max=1.0)
+		temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
 		mean = temp.mean()
 		std = temp.std()
 		temp = (temp - mean) / (std + 1e-6)
@@ -170,17 +171,20 @@ for i in range(len(audios)):
 		loss_value = loss.item()
 		optimizer_noise.zero_grad()
 
-		if use_gpu:
-			with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
-			    scaled_loss.backward()
-		else:
-			loss.backward()
+		# if use_gpu:
+		# 	with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
+		# 	    scaled_loss.backward()
+		# else:
+		loss.backward()
 
-		for  param in noise_model.parameters():
+		for  param in noise_model.parameters(): 
 			print(param.grad)
+
 		torch.nn.utils.clip_grad_value_(noise_model.parameters(), 400)
-		for  param in noise_model.parameters():
-			print(param.grad)
+		# import pdb 
+		# pdb.set_trace()
+		# for  param in model.parameters():
+		# 	print(param.grad)
 		optimizer_noise.step()
 		print("Epoch {} Loss: {:.6f}".format( j,  loss))
 		if j % 10 == 0 :

@@ -19,8 +19,8 @@ librispeech short 10 seconds audio clips : [here](https://github.com/ppriyank/Ad
 ## Evaluate
 `python transcribe.py --model-path saved_model/... --audio-path 8.wav`   
 
-## Steps of instruction 
-python main --model-path saved_model/... -x=[././.,././.,././.] -t "test"
+## Creating noise (stage1)
+python main --model-path saved_model/... -x=[..,..] -t "test"
 
 ## Installation : 
 `pip install -r requirements.txt`  
