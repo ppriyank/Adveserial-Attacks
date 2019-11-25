@@ -2,7 +2,7 @@ import argparse
 import numpy as np 
 import os 
 import json 
-
+from apex import amp
 from scipy.io import wavfile
 
 
@@ -13,11 +13,8 @@ from torch.autograd import Variable
 import torchaudio
 from torch_stft import STFT
 
-
-
 from model import DeepSpeech, supported_rnns
 from decoder import GreedyDecoder
-from utils import reduce_tensor, check_loss
 
 from data.data_loader import load_audio
 
@@ -60,6 +57,7 @@ package = torch.load(args.model_path, map_location=lambda storage, loc: storage)
 model = DeepSpeech.load_model_package(package)
 labels = model.labels
 audio_conf = model.audio_conf
+model.train()
 
 def DB(x):
 	return 20 * torch.max(x).log().clamp(min=-5.0) / torch.log(torch.tensor(10.0))
@@ -76,11 +74,17 @@ if use_gpu:
 	cuda=1
 
 
+
 device = torch.device("cuda" if cuda else "cpu")
 torch.manual_seed(1)
 rescale = 1
 model.to(device)
 
+if cuda:
+	model, optimizer = amp.initialize(model, optimizer,
+		                                      opt_level='O1',
+		                                      keep_batchnorm_fp32=None,
+		                                      loss_scale=1.0)
 
 mask = np.array([[1 if i < l else 0 for i in range(maxlen)] for l in lengths])
 mask = torch.tensor(mask).float()
@@ -91,7 +95,7 @@ original = torch.tensor(np.array(audios)).float()
 
 
 
-
+avg_loss = 0 
 # new_input =  self.apply_delta*mask + original
 
 # for i in range(args.num_iterations):
@@ -139,7 +143,7 @@ out, output_sizes = model(temp, input_sizes)
 
 decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
 decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
-
+print(decoded_output)
 transcript_path = "/scratch/pp1953/short-audio/2.txt"
 labels_map = dict([(labels[i], i) for i in range(len(labels))])
 
@@ -165,67 +169,35 @@ target_sizes = torch.IntTensor(1)
 target_sizes[0]= len(transcript)
 
 criterion = nn.CTCLoss()
-loss = criterion(float_out, targets, output_sizes, target_sizes).to(device)
+softmax = torch.nn.LogSoftmax(2)
 
-
-
-loss = criterion(float_out, targets, output_sizes, target_sizes).to(device)
-loss = loss / magnitude.size(0)  # average the loss by minibatch
+# torch.nn.Softmax(2)(float_out)
+# loss = criterion(float_out, targets, output_sizes, target_sizes).to(device)
+loss = criterion(softmax(float_out), targets, output_sizes, target_sizes).to(device)
 loss = loss.to(device)
-loss_value = reduce_tensor(loss, args.world_size).item()
-            
 loss_value = loss.item()
-valid_loss, error = check_loss(loss, loss_value)
-            
+        
+
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01,momentum=0.1, nesterov=True, weight_decay=1e-5)
 
 optimizer.zero_grad()
 # compute gradient
+loss
+if use_gpu:
+	with amp.scale_loss(loss, optimizer) as scaled_loss:
+	    scaled_loss.backward()
+else:
+	loss.backward()
 
-with amp.scale_loss(loss, optimizer) as scaled_loss:
-    scaled_loss.backward()
-torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_norm)
+torch.nn.utils.clip_grad_norm_(model.parameters(), 400)
 optimizer.step()
 
 
-avg_loss += loss_value
-losses.update(loss_value, inputs.size(0))
-
-print('Epoch: [{0}][{1}/{2}]\t'
-      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
-        (epoch + 1), (i + 1), len(train_sampler), batch_time=batch_time, data_time=data_time, loss=losses))
-            
-
 del loss, out, float_out
-avg_loss /= len(train_sampler)
-
-with torch.no_grad():
-    wer, cer, output_data = evaluate(test_loader=test_loader,
-                                     device=device,
-                                     model=model,
-                                     decoder=decoder,
-                                     target_decoder=decoder)
-loss_results[epoch] = avg_loss
-wer_results[epoch] = wer
-cer_results[epoch] = cer
-print('Validation Summary Epoch: [{0}]\t'
-      'Average WER {wer:.3f}\t'
-      'Average CER {cer:.3f}\t'.format(
-    epoch + 1, wer=wer, cer=cer))
-
-    values = {
-        'loss_results': loss_results,
-        'cer_results': cer_results,
-        'wer_results': wer_results
-    }
-        # anneal lr
 for g in optimizer.param_groups:
-    g['lr'] = g['lr'] / args.learning_anneal
-print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
+    g['lr'] = g['lr'] / 1.1
 
-best_wer = wer
-avg_loss = 0
+print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
 
 
 
