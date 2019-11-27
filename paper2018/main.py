@@ -136,48 +136,58 @@ for i in range(len(audios)):
 	decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 	print(decoded_output)
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
-	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.01, momentum=0.01, weight_decay=0.01, nesterov=True)
+	optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.001, momentum=0.01, weight_decay=1, nesterov=True)
 	if cuda:
 		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
 			opt_level='O1',keep_batchnorm_fp32=None,loss_scale=1.0)
-	for j in range(args.num_iterations * 10):
-		model.zero_grad()
-		wave = noise_model(original, False).to(device)
-		wave = wave.unsqueeze(0)
-		magnitude, phase = stft.transform(wave)
-		magnitude = magnitude.unsqueeze(0)
-		magnitude = magnitude.to(device)
-		magnitude = magnitude.clamp(min=1e-12, max=1.0)
-		temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
-		mean = temp.mean()
-		std = temp.std()
-		temp = (temp - mean) / (std + 1e-6)
-		input_sizes = torch.IntTensor([temp.size(3)]).int()
-		out, output_sizes = model(temp, input_sizes)
-		if j % 100 == 0 : 
-			decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
-			decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
-			temp_audio = wave.view(-1).cpu().detach().numpy()
-			wavfile.write('temp.wav',16000,temp_audio)
-		out = out.transpose(0, 1)  # TxNxH
-		float_out = out.float()  # ensure float32 for loss
-		targets = torch.tensor(int_transcript , dtype= torch.int32 )
-		target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
-		l1_norm = torch.norm(list(noise_model.parameters())[0].data, p=1)
-		loss = DB(noise_model.noise) - DB(original) + criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device) + 0.005 * l1_norm
-		loss_value = loss.item()
-		optimizer_noise.zero_grad()
-		if use_gpu:
-			with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
-			    scaled_loss.backward()
-		else:
-			loss.backward()
-		torch.nn.utils.clip_grad_value_(noise_model.parameters(), 400)
-		optimizer_noise.step()
-		print("Epoch {} Loss: {:.6f}".format( j,  loss))
-		if j % 100 == 0 :
+	tau = 1000
+	for k in range(10) :
+		tau = tau / 10 
+		for j in range(args.num_iterations):
+			model.zero_grad()
+			wave = noise_model(original, False).to(device)
+			wave = wave.unsqueeze(0)
+			magnitude, phase = stft.transform(wave)
+			magnitude = magnitude.unsqueeze(0)
+			magnitude = magnitude.to(device)
+			magnitude = magnitude.clamp(min=1e-12, max=1.0)
+			temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
+			mean = temp.mean()
+			std = temp.std()
+			temp = (temp - mean) / (std + 1e-6)
+			input_sizes = torch.IntTensor([temp.size(3)]).int()
+			out, output_sizes = model(temp, input_sizes)
+			if j % 100 == 0 : 
+				decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
+				decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
+				temp_audio = wave.view(-1).cpu().detach().numpy()
+				wavfile.write('temp.wav',16000,temp_audio)
+			out = out.transpose(0, 1)  # TxNxH
+			float_out = out.float()  # ensure float32 for loss
+			targets = torch.tensor(int_transcript , dtype= torch.int32 )
+			target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
+
+			l2_norm = torch.norm(noise_model.noise, p=2)
+			db_x  = DB(noise_model.noise) - DB(original)
+			db_x = torch.abs(db_x)
+			if db_x.item() < 10**(tau/20) :  
+				loss = l2_norm +  0.5 * criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device)
+			else:
+				loss = l2_norm +  10 * (db_x - 10**(tau/20)) + 0.5 * criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device)
+
+			loss_value = loss.item()
+			optimizer_noise.zero_grad()
+			if use_gpu:
+				with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
+				    scaled_loss.backward()
+			else:
+				loss.backward()
+			torch.nn.utils.clip_grad_value_(noise_model.parameters(), 400)
+			optimizer_noise.step()
 			print("Epoch {} Loss: {:.6f}".format( j,  loss))
-			print("decoded_output: %s"%(decoded_output[0][0]))
+			if j % 100 == 0 :
+				print("Epoch {} Loss: {:.6f}".format( j,  loss))
+				print("decoded_output: %s"%(decoded_output[0][0]))
 
 
 
@@ -190,7 +200,7 @@ for i in range(len(audios)):
 
 
 # python main.py -x=[/scratch/pp1953/short-audio/1.wav,/scratch/pp1953/short-audio/2.wav,/scratch/pp1953/short-audio/3.wav] -t "test"
-
+# python main.py -t "test"
 
 
 
