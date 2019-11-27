@@ -101,7 +101,7 @@ class Noise_model(nn.Module):
         new_input =  apply_delta + original
         noise = torch.zeros(batch_size, maxlen).to(device)
         noise.data.normal_(0, std=2)
-        pass_in = torch.clamp(new_input+noise, min=-2**15, max=2**15-1)
+        pass_in = torch.clamp(new_input+ noise, min=-2**15, max=2**15-1)
         return pass_in , apply_delta
 
 
@@ -186,7 +186,8 @@ for i in range(len(audios)):
 			torch.nn.utils.clip_grad_value_(noise_model.parameters(), 400)
 			optimizer_noise.step()
 			if j % 100 == 0 : 
-				wave = noise_model(original, no_noise=True).to(device)
+				wave , _ = noise_model(original, no_noise=False)
+				wave ,  delta = wave.to(device) ,  delta.to(device)
 				wave = wave.unsqueeze(0)
 				magnitude, phase = stft.transform(wave)
 				magnitude = magnitude.unsqueeze(0)
