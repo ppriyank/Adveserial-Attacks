@@ -23,6 +23,7 @@ parser.add_argument('-t', '--target-phrase', type=str, default='testing')
 parser.add_argument('-x', '--input-audio-paths', type=list, default=[c for c in '[/scratch/pp1953/short-audio/2.wav]'])
 parser.add_argument('-mp', '--model-path', type=str, default="saved_model/librispeech_pretrained_v2.pth")
 parser.add_argument('-gpu', '--gpu-devices', type=str, default="0")
+parser.add_argument('-out', '--out-name', type=str, default="0")
 parser.add_argument('--num-iterations', type=int, default=5000)
 
 
@@ -87,6 +88,7 @@ class Noise_model(nn.Module):
         else:
             self.noise = nn.Parameter(torch.randn(batch_size, maxlen))
         self.rescale = 1
+        self.batch_size = batch_size
     def forward(self, x, debug= False):
         if debug == True:
         	return x
@@ -161,7 +163,7 @@ for i in range(len(audios)):
 				decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
 				decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 				temp_audio = wave.view(-1).cpu().detach().numpy()
-				wavfile.write('temp.wav',16000,temp_audio)
+				wavfile.write('temp%s.wav'%(args.out_name),16000,temp_audio)
 			out = out.transpose(0, 1)  # TxNxH
 			float_out = out.float()  # ensure float32 for loss
 			targets = torch.tensor(int_transcript , dtype= torch.int32 )
@@ -188,11 +190,8 @@ for i in range(len(audios)):
 			if j % 100 == 0 :
 				print("Epoch {} Loss: {:.6f}".format( j,  loss))
 				print("decoded_output: %s"%(decoded_output[0][0]))
-
-
-
-# for g in optimizer_noise.param_groups:
-#     g['lr'] = g['lr'] / 1.1
+				for g in optimizer_noise.param_groups:
+				    g['lr'] = g['lr'] / 1.05
 
 
 # print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
@@ -200,7 +199,7 @@ for i in range(len(audios)):
 
 
 # python main.py -x=[/scratch/pp1953/short-audio/1.wav,/scratch/pp1953/short-audio/2.wav,/scratch/pp1953/short-audio/3.wav] -t "test"
-# python main.py -t "test"
+# python main.py -t "test is a test" --out-name=0
 
 
 
