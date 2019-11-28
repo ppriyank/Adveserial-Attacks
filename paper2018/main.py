@@ -87,7 +87,8 @@ class Noise_model(nn.Module):
             # self.noise = nn.Parameter(torch.randn(batch_size, maxlen).cuda())
             self.noise = nn.Parameter(torch.zeros(batch_size, maxlen).cuda())
         else:
-            self.noise = nn.Parameter(torch.randn(batch_size, maxlen))
+            # self.noise = nn.Parameter(torch.randn(batch_size, maxlen))
+            self.noise = nn.Parameter(torch.zeros(batch_size, maxlen))
         self.rescale = 1
         self.batch_size = batch_size
 
@@ -95,7 +96,7 @@ class Noise_model(nn.Module):
         if debug == True:
         	return x
         apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
-        new_input = apply_delta  + original
+        new_input = apply_delta + original
         
         noise = torch.zeros(self.batch_size, maxlen).to(device)
         noise.data.normal_(0, std=2)
@@ -148,7 +149,7 @@ for i in range(len(audios)):
 	print(decoded_output)
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
 	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=0.01, weight_decay=0.0005)
-	# optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.001, momentum=0.01, weight_decay=1, nesterov=True)
+	# optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.001, momentum=0.001, weight_decay=0.01, nesterov=True)
 	if cuda:
 		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
 			opt_level='O1',keep_batchnorm_fp32=None,loss_scale=1.0)
@@ -160,16 +161,15 @@ for i in range(len(audios)):
 		for j in range(args.num_iterations):
 			wave = noise_model(original)
 			wave = wave.to(device)
-			# wave = nn.functional.normalize(wave, p=2, dim=1)
 			wave = wave.unsqueeze(0)
 			magnitude, phase = stft.transform(wave)
 			magnitude = magnitude.unsqueeze(0)
 			magnitude = magnitude.to(device)
 			magnitude = magnitude.clamp(min=1e-12, max=1.0)
 			temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
-			# mean = temp.mean()
-			# std = temp.std()
-			# temp = (temp - mean) / (std + 1e-6)
+			mean = temp.mean()
+			std = temp.std()
+			temp = (temp - mean) / (std + 1e-6)
 			input_sizes = torch.IntTensor([temp.size(3)]).int()
 			out, output_sizes = model(temp, input_sizes)
 			out = out.transpose(0, 1)  # TxNxH
@@ -182,7 +182,7 @@ for i in range(len(audios)):
 			db_x = torch.abs(db_x)
 			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device)
 			if db_x.item() < 10**(tau/20) :  
-				loss = l2_norm +   10*ctc_loss
+				loss =  10*ctc_loss
 			else:
 				loss = l2_norm +  100 * (db_x - 10**(tau/20)) +   10*ctc_loss
 			model.zero_grad()
