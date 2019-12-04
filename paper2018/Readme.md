@@ -10,7 +10,7 @@ Tensorflow implementation available here :
 Set up a Audio to Speech (ASR) model first   (if you get stuck with the error of linker Read Troble shooting below (`python setup.py install`) ) 
 [GITHUB](https://github.com/SeanNaren/deepspeech.pytorch)  
 
-Note you need : `CTCLoss` as well
+Note you need : `CTCLoss` as well [follow this](https://github.com/SeanNaren/warp-ctc)
 
 
 Download a pretrained model : `librispeech_pretrained_v2.pth`   
@@ -49,3 +49,50 @@ in addition to pip install librosa
 
 ### python-levenshtein 
 conda install -c conda-forge python-levenshtein  
+
+
+
+### NYU : 
+CILVR
+
+```
+export PATH="/misc/vlgscratch4/LakeGroup/pathak/anaconda3/bin:$PATH"
+conda activate pathak 
+conda install -n pathak nb_conda_kernels
+
+python 
+
+import torch
+from warpctc_pytorch import CTCLoss
+ctc_loss = CTCLoss()
+```
+
+Prince:
+
+```
+module load cmake/intel/3.11.4
+module load gcc/9.1.0
+```
+add at the top of `CMakeLists.txt`
+```
+INCLUDE(CMakeForceCompiler)
+CMAKE_FORCE_C_COMPILER(gcc GNU)
+CMAKE_FORCE_CXX_COMPILER(g++ GNU)
+```
+
+
+```
+export PATH="~/anaconda3/bin:$PATH"
+cmake -DCMAKE_CXX_COMPILER=/usr/bin/g++ -DCMAKE_C_COMPILER=/usr/bin/gcc ..
+conda install gxx_linux-64
+```
+
+
+
+
+
+
+module load cudnn/9.0v7.3.0.29 
+module load cuda/9.0.176
+
+python 
