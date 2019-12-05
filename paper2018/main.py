@@ -137,7 +137,8 @@ softmax = torch.nn.LogSoftmax(2)
 decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
 model.requires_grad = True	
 import pdb 
-thresold = 5
+thresold = 3
+thresold_2 = 2
 for i in range(len(audios)):
 	print("processing %d-th audio (%s)" %(i+1, args.input_audio_paths[i]))
 	maxlen =lengths[i]
@@ -176,6 +177,7 @@ for i in range(len(audios)):
 		count  = 0
 		prev = 100
 		tau = tau / 10 
+		# noise_model.factor +=10
 		for j in range(args.num_iterations):
 			wave = noise_model(original)
 			wave = wave.to(device)
@@ -199,14 +201,14 @@ for i in range(len(audios)):
 			db_x  = DB(wave - original) - DB(original)
 			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
 			# pdb.set_trace()
-			if decoded_output[0][0] == target_phrase or ctc_loss.item() < 1:
-				loss = l2_norm  + 0.005 * (db_x  - 10**(tau/20) ) + 0.0005 * ctc_loss
+			if decoded_output[0][0] == target_phrase or ctc_loss.item() < 2:
+				loss = 0.005 * l2_norm  + 0.05 * (db_x  - 10**(tau/20) ) + 0.05 * ctc_loss
 				if db_x.item() > 10**(tau/20):
 					loss += 10 * (db_x  - 10**(tau/20) )
 			elif db_x.item() < 10**(tau/20) :  
-				loss =  ctc_loss + 0.05 * l2_norm + 0.005 * (db_x  - 10**(tau/20) )
+				loss =  ctc_loss + 0.005 * l2_norm + 0.005 * (db_x  - 10**(tau/20) )
 			else:
-				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + 0.05 * ctc_loss
+				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + 0.0005 * ctc_loss
 			# loss = l2_norm +  100 * db_loss  
 			model.zero_grad()
 			loss_value = loss.item()
@@ -249,13 +251,15 @@ for i in range(len(audios)):
 				# import pdb 
 				# pdb.set_trace()
 
-				if decoded_output[0][0] == target_phrase or ctc_loss.item() < 1 :
+				if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2 :
 					# numpy_to_req_wav(audio_file_name='yey_1%s.wav'%(args.out_name) , audio_np=temp_audio)
 					# numpy_to_req_wav(audio_file_name='yey%s.wav'%(args.out_name) , audio_np=temp_audio)
 					wavfile.write('yey_0%s.wav'%(args.out_name),16000,temp_audio * 300)
+					wavfile.write('yey_1%s.wav'%(args.out_name),16000,temp_audio )
+
 					torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
-					if ctc_loss.item() < 0.3 or decoded_output[0][0] == target_phrase:
-						noise_model.factor +=10
+					if ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase:
+						noise_model.factor +=5
 
 					if decoded_output[0][0] == target_phrase:
 						count +=1 
