@@ -10,8 +10,7 @@ Tensorflow implementation available here :
 Set up a Audio to Speech (ASR) model first   (if you get stuck with the error of linker Read Troble shooting below (`python setup.py install`) ) 
 [GITHUB](https://github.com/SeanNaren/deepspeech.pytorch)  
 
-Note you need : `CTCLoss` as well
-
+Note you need : `CTCLoss` as well [follow this](https://github.com/SeanNaren/warp-ctc)
 
 Download a pretrained model : `librispeech_pretrained_v2.pth`   
 librispeech short 10 seconds audio clips : [here](https://github.com/ppriyank/Adveserial-Attacks/tree/master/audio-dataset/short-audio)  
@@ -49,3 +48,20 @@ in addition to pip install librosa
 
 ### python-levenshtein 
 conda install -c conda-forge python-levenshtein  
+
+
+### NYU : 
+CILVR
+
+```
+export PATH="/misc/vlgscratch4/LakeGroup/pathak/anaconda3/bin:$PATH"
+conda activate pathak 
+conda install -n pathak nb_conda_kernels
+
+python 
+
+import torch
+from warpctc_pytorch import CTCLoss
+ctc_loss = CTCLoss()
+```
+
