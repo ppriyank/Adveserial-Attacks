@@ -1,7 +1,8 @@
 
 Pytorch Implementation of the paper:  
 **Audio Adversarial Examples: Targeted Attacks on Speech-to-Text**  
-*Nicholas Carlini David Wagner*  
+*Nicholas Carlini David Wagner*    
+[Paper](https://arxiv.org/pdf/1801.01944.pdf)  
 
 Tensorflow implementation available here :   
 [GITHUB](https://github.com/carlini/audio_adversarial_examples)
@@ -20,10 +21,14 @@ librispeech short 10 seconds audio clips : [here](https://github.com/ppriyank/Ad
 `python transcribe.py --model-path saved_model/... --audio-path 8.wav`   
 
 ## Creating noise (stage1)
-python main --model-path saved_model/... -x=[..,..] -t "test"
+(module load gcc/9.1.0) (gcc 9.1.0 required)  
+`python main --model-path saved_model/... -x=[..,..] -t "test"`
 
 ## Installation : 
 `pip install -r requirements.txt`  
+
+## NAN Error ?? : 
+CTC loss is really buggy. Too low noise (sending almost original singnal and asking it to produce something else), creates NaN gradients. which will corrupt l2 norm and DBx noise. So restart the process if that happens. 
 
  
 
@@ -135,5 +140,3 @@ cd warp-ctc
 mkdir build; cd build
 cmake ..
 make
-=======
->>>>>>> e58d8534db8ad91a2d223b3f745cf186c435567b

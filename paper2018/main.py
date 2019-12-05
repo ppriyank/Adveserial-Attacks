@@ -15,7 +15,7 @@ from torch_stft import STFT
 
 from model import DeepSpeech, supported_rnns
 from decoder import GreedyDecoder
-
+import wave as chikka
 from data.data_loader import load_audio
 
 parser = argparse.ArgumentParser(description='idk :P')
@@ -119,6 +119,19 @@ def DB(x):
 	return 20 * torch.max(x + 1e-6).log() / torch.log(torch.tensor(10.0))
 
 
+def numpy_to_req_wav(audio_file_name, audio_np):
+	audio_bytes = audio_np.tobytes()
+	nchannels = 1
+	sampwidth = 2
+	framerate = 16000
+	#audio_file_name is the path with filename of the .wav file
+	with chikka.open(audio_file_name, "wb") as wave_file:
+		wave_file.setnchannels(nchannels)
+		wave_file.setsampwidth(sampwidth)
+		wave_file.setframerate(framerate)
+		wave_file.writeframes(audio_bytes)
+
+
 criterion = nn.CTCLoss(zero_infinity=True).to(device)
 softmax = torch.nn.LogSoftmax(2)
 decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
@@ -183,22 +196,17 @@ for i in range(len(audios)):
 			float_out = out.float()  # ensure float32 for loss
 			
 			l2_norm = torch.norm((wave - original), p=2).pow(2)
-			# l2_norm =(wave - original).max().pow(2)
-
 			db_x  = DB(wave - original) - DB(original)
-			# db_x_relevant = torch.abs(db_x)
-			# db_x_relevant = db_x
-			# db_x_relevant = (db_x_relevant - 10**(tau/20))
-			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400)
-			# db_loss = (db_x - 10**(tau/20))
+			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
+			# pdb.set_trace()
 			if decoded_output[0][0] == target_phrase or ctc_loss.item() < 1:
-				loss = l2_norm  + 0.005 * (db_x  - 10**(tau/20) ) + 0.005 * ctc_loss
+				loss = l2_norm  + 0.005 * (db_x  - 10**(tau/20) ) + 0.0005 * ctc_loss
 				if db_x.item() > 10**(tau/20):
 					loss += 10 * (db_x  - 10**(tau/20) )
 			elif db_x.item() < 10**(tau/20) :  
 				loss =  ctc_loss + 0.05 * l2_norm + 0.005 * (db_x  - 10**(tau/20) )
 			else:
-				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + ctc_loss
+				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + 0.05 * ctc_loss
 			# loss = l2_norm +  100 * db_loss  
 			model.zero_grad()
 			loss_value = loss.item()
@@ -208,14 +216,17 @@ for i in range(len(audios)):
 				    scaled_loss.backward()
 			else:
 				loss.backward()
-
-			assert(not torch.isnan(loss).any(), "NaNs in loss.")
+			# print(loss)
+			if torch.isnan(loss).any():
+				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
+				assert not torch.isnan(loss).any()
 			# print(float_out.shape , targets.shape, output_sizes,target_sizes )
 			torch.nn.utils.clip_grad_value_(model.parameters(), 10)
 			torch.nn.utils.clip_grad_value_(noise_model.parameters(), 10)
 			# pdb.set_trace()
 			optimizer_noise.step()
 			if j % 10 == 0 : 
+
 				# noise_model.rescale *= 0.8
 				wave = noise_model(original, no_noise=True)
 				wave = wave.to(device)
@@ -233,10 +244,15 @@ for i in range(len(audios)):
 				decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 				temp_audio = wave.view(-1).cpu().detach().numpy()
 				wavfile.write('temp%s.wav'%(args.out_name),16000,temp_audio)
-				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau))
+				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
 				print("decoded_output: %s"%(decoded_output[0][0]))
+				# import pdb 
+				# pdb.set_trace()
+
 				if decoded_output[0][0] == target_phrase or ctc_loss.item() < 1 :
-					wavfile.write('yey%s.wav'%(args.out_name),16000,temp_audio)
+					# numpy_to_req_wav(audio_file_name='yey_1%s.wav'%(args.out_name) , audio_np=temp_audio)
+					# numpy_to_req_wav(audio_file_name='yey%s.wav'%(args.out_name) , audio_np=temp_audio)
+					wavfile.write('yey_0%s.wav'%(args.out_name),16000,temp_audio * 300)
 					torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
 					if ctc_loss.item() < 0.3 or decoded_output[0][0] == target_phrase:
 						noise_model.factor +=10
@@ -250,7 +266,7 @@ for i in range(len(audios)):
 				if loss_value < prev and loss_value > prev -0.5:
 					count += 1
 					prev = loss_value
-					if count >= thresold :
+					if count > thresold :
 						break	 
 				else:
 					prev = min(loss_value, prev)
