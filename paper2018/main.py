@@ -91,13 +91,13 @@ class Noise_model(nn.Module):
             self.noise = nn.Parameter(torch.zeros(batch_size, maxlen))
         self.rescale = 1
         self.batch_size = batch_size
-
+        self.factor  = 60
     def forward(self, x, debug= False, no_noise= False):
         if debug == True:
         	return x
         apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
         # apply_delta = nn.functional.normalize(apply_delta, p=2, dim=1)
-        new_input = apply_delta  + original
+        new_input = apply_delta / self.factor  + original
         if no_noise:
         	return new_input
         noise = torch.zeros(self.batch_size, maxlen).to(device)
@@ -159,7 +159,7 @@ for i in range(len(audios)):
 	tau = 1000
 	targets = torch.tensor(int_transcript , dtype= torch.int32 )
 	target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
-	for k in range(100) :
+	for k in range(50) :
 		count  = 0
 		prev = 100
 		tau = tau / 10 
@@ -183,18 +183,22 @@ for i in range(len(audios)):
 			float_out = out.float()  # ensure float32 for loss
 			
 			l2_norm = torch.norm((wave - original), p=2).pow(2)
-			db_x  = DB(wave - original) - DB(original)
-			db_x = torch.abs(db_x)
-			
+			# l2_norm =(wave - original).max().pow(2)
 
+			db_x  = DB(wave - original) - DB(original)
+			# db_x_relevant = torch.abs(db_x)
+			# db_x_relevant = db_x
+			# db_x_relevant = (db_x_relevant - 10**(tau/20))
 			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400)
-			db_loss = (db_x - 10**(tau/20))
+			# db_loss = (db_x - 10**(tau/20))
 			if decoded_output[0][0] == target_phrase or ctc_loss.item() < 1:
-				loss = l2_norm +  100 * db_loss  
+				loss = l2_norm  + 0.005 * (db_x  - 10**(tau/20) ) + 0.005 * ctc_loss
+				if db_x.item() > 10**(tau/20):
+					loss += 10 * (db_x  - 10**(tau/20) )
 			elif db_x.item() < 10**(tau/20) :  
-				loss =  ctc_loss + 0.05 * l2_norm
+				loss =  ctc_loss + 0.05 * l2_norm + 0.005 * (db_x  - 10**(tau/20) )
 			else:
-				loss = l2_norm +  100 * db_loss  +   ctc_loss
+				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + ctc_loss
 			# loss = l2_norm +  100 * db_loss  
 			model.zero_grad()
 			loss_value = loss.item()
@@ -205,16 +209,12 @@ for i in range(len(audios)):
 			else:
 				loss.backward()
 
+			assert(not torch.isnan(loss).any(), "NaNs in loss.")
 			# print(float_out.shape , targets.shape, output_sizes,target_sizes )
 			torch.nn.utils.clip_grad_value_(model.parameters(), 10)
 			torch.nn.utils.clip_grad_value_(noise_model.parameters(), 10)
-			# print(noise_model.noise.grad.max())
-			# print("L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {:.10f}".format(l2_norm.item(),  db_loss.item(), ctc_loss.item() ,tau))
 			# pdb.set_trace()
 			optimizer_noise.step()
-			# print(decoded_offsets[0][0].shape, noise_model.noise.max())
-			# if noise_model.rescale * 2000 >  torch.max(noise_model.noise).item():
-			# 	noise_model.rescale = torch.max(noise_model.noise).item() / 2000 
 			if j % 10 == 0 : 
 				# noise_model.rescale *= 0.8
 				wave = noise_model(original, no_noise=True)
@@ -233,10 +233,14 @@ for i in range(len(audios)):
 				decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 				temp_audio = wave.view(-1).cpu().detach().numpy()
 				wavfile.write('temp%s.wav'%(args.out_name),16000,temp_audio)
-				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {:.10f}".format(count, k, j, l2_norm.item(),  db_loss.item(), ctc_loss.item() ,tau))
+				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau))
 				print("decoded_output: %s"%(decoded_output[0][0]))
 				if decoded_output[0][0] == target_phrase or ctc_loss.item() < 1 :
 					wavfile.write('yey%s.wav'%(args.out_name),16000,temp_audio)
+					torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
+					if ctc_loss.item() < 0.3 or decoded_output[0][0] == target_phrase:
+						noise_model.factor +=10
+
 					if decoded_output[0][0] == target_phrase:
 						count +=1 
 						if count >= thresold:
