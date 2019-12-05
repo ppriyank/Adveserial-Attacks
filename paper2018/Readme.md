@@ -79,3 +79,61 @@ CMAKE_FORCE_C_COMPILER(gcc GNU)
 CMAKE_FORCE_CXX_COMPILER(g++ GNU)
 ```
 
+
+```
+export PATH="~/anaconda3/bin:$PATH"
+cmake -DCMAKE_CXX_COMPILER=/usr/bin/g++ -DCMAKE_C_COMPILER=/usr/bin/gcc ..
+conda install gxx_linux-64
+```
+
+~/anaconda3/envs/pathak/bin/gcc
+cmake -DCMAKE_CXX_COMPILER=/home/pp1953/anaconda3/envs/pathak/bin/g++ -DCMAKE_C_COMPILER=/home/pp1953/anaconda3/envs/pathak/bin/gcc ..
+
+
+
+conda install gcc==4.8.5
+gcc --version 
+g++ --version 
+
+export CC=`which gcc`
+export CXX=`which g++`
+
+
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+
+echo 'export CXX=/usr/bin/g++' >> ~/.bashrc
+echo 'export CC=/usr/bin/gcc' >> ~/.bashrc
+
+export CXX=/c/MinGW/bin/g++.exe
+
+
+module load cudnn/9.0v7.3.0.29 
+module load cuda/9.0.176
+
+python 
+
+
+
+ln -s /usr/local/bin/gcc-4.8 cc
+ln -s /usr/local/bin/gcc-4.8 gcc
+ln -s /usr/local/bin/c++-4.8 c++
+ln -s /usr/local/bin/g++-4.8 g++
+
+
+INCLUDE(CMakeForceCompiler)
+CMAKE_FORCE_C_COMPILER(gcc GNU)
+CMAKE_FORCE_CXX_COMPILER(g++ GNU)
+
+
+
+
+
+
+git clone https://github.com/SeanNaren/warp-ctc.git
+cd warp-ctc
+mkdir build; cd build
+cmake ..
+make
+=======
+>>>>>>> e58d8534db8ad91a2d223b3f745cf186c435567b
