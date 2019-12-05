@@ -28,7 +28,7 @@ librispeech short 10 seconds audio clips : [here](https://github.com/ppriyank/Ad
 `pip install -r requirements.txt`  
 
 ## NAN Error ?? : 
-CTC loss is really buggy. Too low noise (sending almost original singnal and asking it to produce something else), creates NaN gradients. which will corrupt l2 norm and DBx noise. So restart the process if that happens. 
+CTC loss is really buggy. Too low noise (l2-norm) (sending almost original singnal and asking it to produce something else), creates NaN gradients with respect to CTC loss, which will corrupt l2 norm and DBx noise. So restart the process if that happens. If the target phrase is compleicated (increase the ctc_loss_weight, default 0.0005)
 
  
 

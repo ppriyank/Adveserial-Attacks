@@ -25,10 +25,16 @@ parser.add_argument('-mp', '--model-path', type=str, default="saved_model/libris
 parser.add_argument('-gpu', '--gpu-devices', type=str, default="0")
 parser.add_argument('-out', '--out-name', type=str, default="0")
 parser.add_argument('--num-iterations', type=int, default=10000)
-
+parser.add_argument('--ctc-weight', type=float, default=0.0005)
 
 args = parser.parse_args()
 
+
+import pdb 
+thresold = 3
+thresold_2 = 2
+# ctc_loss_weight = 0.0005
+ctc_loss_weight = args.ctc_weight
 
 
 # print(args)
@@ -136,9 +142,6 @@ criterion = nn.CTCLoss(zero_infinity=True).to(device)
 softmax = torch.nn.LogSoftmax(2)
 decoder = GreedyDecoder(model.labels, blank_index=model.labels.index('_'))
 model.requires_grad = True	
-import pdb 
-thresold = 3
-thresold_2 = 2
 for i in range(len(audios)):
 	print("processing %d-th audio (%s)" %(i+1, args.input_audio_paths[i]))
 	maxlen =lengths[i]
@@ -208,7 +211,7 @@ for i in range(len(audios)):
 			elif db_x.item() < 10**(tau/20) :  
 				loss =  ctc_loss + 0.005 * l2_norm + 0.005 * (db_x  - 10**(tau/20) )
 			else:
-				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + 0.0005 * ctc_loss
+				loss = l2_norm +  10 * (db_x  - 10**(tau/20) ) + ctc_loss_weight * ctc_loss
 			# loss = l2_norm +  100 * db_loss  
 			model.zero_grad()
 			loss_value = loss.item()
