@@ -33,7 +33,7 @@ args = parser.parse_args()
 
 
 import pdb 
-thresold = 3
+thresold = 2
 thresold_2 = 2
 # ctc_loss_weight = 0.0005
 ctc_loss_weight = args.ctc_weight
@@ -107,10 +107,10 @@ class Noise_model(nn.Module):
         	return x
         apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
         if check:
-        	new_input = apply_delta / self.factor  + original * 300
+        	new_input = apply_delta / self.factor  + original * 10
         	return new_input
         
-        new_input = apply_delta / self.factor  + original
+        new_input = apply_delta / self.factor  + original * 10
         if no_noise:
         	return new_input
 
@@ -133,8 +133,6 @@ def DB(x):
 	return 20 * torch.max(torch.abs(x) + 1e-6).log() / torch.log(torch.tensor(10.0))
 
 
-# def DB(x):
-# 	return 20 * (torch.norm((x), p=2).pow(2).clamp(min=0.5) + 1e-6).log() / torch.log(torch.tensor(10.0))
 
 def output(wave ):
 	magnitude, phase = stft.transform(wave)
@@ -194,7 +192,7 @@ for i in range(len(audios)):
 	decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 	print(decoded_output)
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
-	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=0.01, weight_decay=0.000001)
+	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=0.01, weight_decay=0.1)
 	# optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.001, momentum=0.001, weight_decay=0.01, nesterov=True)
 	if cuda:
 		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
@@ -202,6 +200,7 @@ for i in range(len(audios)):
 	tau = 10
 	targets = torch.tensor(int_transcript , dtype= torch.int32 )
 	target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
+	db_original = DB(original * 10 )
 	for k in range(50) :
 		count  = 0
 		prev = 100
@@ -226,21 +225,18 @@ for i in range(len(audios)):
 			out = out.transpose(0, 1)  # TxNxH
 			float_out = out.float()  # ensure float32 for loss
 			
-			# l2_norm = torch.norm((wave - original), p=2).pow(2).clamp(min=0.5)
+			l2_norm = torch.norm((wave - 10 * original), p=2).pow(2).clamp(min=0.5)
 			# l2_norm = torch.norm((wave - original), p=1).pow(3).clamp(min=1)
-			l2_norm = torch.abs(wave - original).clamp(min=2).mean()
-			db_x  = DB(wave - original) - DB(original)
+			db_x  = DB(wave - 10 * original) - db_original
 			
 
 			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
-			if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2:
-				loss =  db_weight * (db_x  - 10**(tau/20) ) 
-			elif db_x.item() < 10**(tau/20) :  
-				# loss =  ctc_loss + 0.05 * l2_norm + 0.05 * (db_x  - 10**(tau/20) )
-				loss = ctc_loss_weight * ctc_loss + (db_x  - 10**(tau/20) ) 
+			if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2:				
+				loss =  db_weight * (db_x - tau)+ l2_norm * l2_weight
+			elif db_x.item() < tau :  
+				loss = ctc_loss_weight * ctc_loss 
 			else:
-				loss =  10 * (db_x  - 10**(tau/20) ) + 0.5 * ctc_loss
-			# loss = l2_norm +  100 * db_loss  
+				loss =  10 * (db_x  - tau)  + 0.5 * ctc_loss
 			model.zero_grad()
 			loss_value = loss.item()
 			optimizer_noise.zero_grad()
@@ -258,7 +254,8 @@ for i in range(len(audios)):
 			torch.nn.utils.clip_grad_value_(noise_model.parameters(), 10)
 			# pdb.set_trace()
 			optimizer_noise.step()
-			if j % 10 == 0 : 
+			if j % 10 == 0 :
+				ctc_loss_weight = ctc_loss_weight / 1.05 
 				wave = noise_model(original, no_noise=True)
 				wave = wave.to(device)
 				wave = wave.unsqueeze(0)
@@ -273,9 +270,7 @@ for i in range(len(audios)):
 				wave2 = wave2.unsqueeze(0)
 				decoded_output2, decoded_offsets2 = output(wave2)
 				temp_audio2 = wave2.view(-1).cpu().detach().numpy()
-				print("decoded_output2: %s"%(decoded_output2[0][0]))
-
-								
+				print("decoded_output2: %s"%(decoded_output2[0][0]))								
 
 				if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2 :
 					# numpy_to_req_wav(audio_file_name='yey_1%s.wav'%(args.out_name) , audio_np=temp_audio)
