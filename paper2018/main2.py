@@ -204,7 +204,16 @@ for i in range(len(audios)):
 	for k in range(20) :
 		count  = 0
 		prev = 100
-		tau = tau - 5 
+
+		wave2 = noise_model(original, check=True)
+		wave2 = wave2.to(device)
+		wave2 = wave2.unsqueeze(0)
+		decoded_output2, decoded_offsets2 = output(wave2)
+		temp_audio2 = wave2.view(-1).cpu().detach().numpy()
+		print("decoded_output2: %s"%(decoded_output2[0][0]))								
+		wavfile.write('yey_1%s.wav'%(args.out_name),16000,temp_audio2 )
+
+		# tau = tau - 5 
 		# noise_model.factor +=10
 		for j in range(args.num_iterations):
 			wave = noise_model(original)
@@ -238,7 +247,7 @@ for i in range(len(audios)):
 			elif db_x.item() < tau :  
 				loss = ctc_loss_weight * ctc_loss 
 			else:
-				loss =  10 * (db_x  - tau)  + ctc_loss_weight * ctc_loss
+				loss =  db_weight * (db_x  - tau)  + ctc_loss_weight * ctc_loss
 			model.zero_grad()
 			loss_value = loss.item()
 			optimizer_noise.zero_grad()
@@ -263,18 +272,12 @@ for i in range(len(audios)):
 				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : 1/{}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
 				print("decoded_output: %s"%(decoded_output[0][0]))
 
-				wave2 = noise_model(original, check=True)
-				wave2 = wave2.to(device)
-				wave2 = wave2.unsqueeze(0)
-				decoded_output2, decoded_offsets2 = output(wave2)
-				temp_audio2 = wave2.view(-1).cpu().detach().numpy()
-				print("decoded_output2: %s"%(decoded_output2[0][0]))								
-
+				
 				if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2 :
 					# numpy_to_req_wav(audio_file_name='yey_1%s.wav'%(args.out_name) , audio_np=temp_audio)
 					# numpy_to_req_wav(audio_file_name='yey%s.wav'%(args.out_name) , audio_np=temp_audio)
 					wavfile.write('yey_0%s.wav'%(args.out_name),16000,temp_audio2)
-					wavfile.write('yey_1%s.wav'%(args.out_name),16000,temp_audio )
+					
 
 					torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
 					if (ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase) and db_x.item() < tau :
