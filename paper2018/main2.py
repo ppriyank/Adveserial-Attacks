@@ -34,12 +34,12 @@ args = parser.parse_args()
 
 import pdb 
 thresold = 2
-thresold_2 = 2
+thresold_2 = 0.5
 # ctc_loss_weight = 0.0005
 ctc_loss_weight = args.ctc_weight
 l2_weight = args.l2_weight
 db_weight = args.db_weight
-
+scaling_factor = 5
 
 # print(args)
 args.input_audio_paths = ("".join(args.input_audio_paths[1:-1])).split(",")
@@ -101,16 +101,16 @@ class Noise_model(nn.Module):
             self.noise = nn.Parameter(torch.zeros(batch_size, maxlen))
         self.rescale = 1
         self.batch_size = batch_size
-        self.factor  = 60
+        self.factor  = 1
     def forward(self, x, debug= False, no_noise= False, check=False):
         if debug == True:
         	return x
         apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
         if check:
-        	new_input = apply_delta / self.factor  + original * 10
+        	new_input = apply_delta / self.factor  + original * scaling_factor
         	return new_input
         
-        new_input = apply_delta / self.factor  + original * 10
+        new_input = apply_delta / self.factor  + original * scaling_factor
         if no_noise:
         	return new_input
 
@@ -118,9 +118,9 @@ class Noise_model(nn.Module):
         noise.data.normal_(0, std=2)
         noise_energy = (noise.view(-1) * noise.view(-1)).sum() 
         # noise_levels=(0, 0.5)
-        data_energy = (original.view(-1) * original.view(-1)).sum() 
+        data_energy = (scaling_factor**2) * (original.view(-1) * original.view(-1)).sum() 
         # noise_level = np.random.uniform(noise_levels)[1]
-        noise_level = self.factor
+        noise_level = self.rescale
         noise = noise_level * noise * data_energy / noise_energy
 
         pass_in = new_input +  noise 
@@ -192,19 +192,19 @@ for i in range(len(audios)):
 	decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
 	print(decoded_output)
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
-	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=0.01, weight_decay=0.1)
-	# optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.001, momentum=0.001, weight_decay=0.01, nesterov=True)
+	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=0.01, weight_decay=0)
+	# optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.01, momentum=0, nesterov=False)
 	if cuda:
 		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
 			opt_level='O1',keep_batchnorm_fp32=None,loss_scale=1.0)
 	tau = 10
 	targets = torch.tensor(int_transcript , dtype= torch.int32 )
 	target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
-	db_original = DB(original * 10 )
-	for k in range(50) :
+	db_original = DB(original * scaling_factor )
+	for k in range(20) :
 		count  = 0
 		prev = 100
-		tau = tau / 10 
+		tau = tau - 5 
 		# noise_model.factor +=10
 		for j in range(args.num_iterations):
 			wave = noise_model(original)
@@ -225,18 +225,20 @@ for i in range(len(audios)):
 			out = out.transpose(0, 1)  # TxNxH
 			float_out = out.float()  # ensure float32 for loss
 			
-			l2_norm = torch.norm((wave - 10 * original), p=2).pow(2).clamp(min=0.5)
-			# l2_norm = torch.norm((wave - original), p=1).pow(3).clamp(min=1)
-			db_x  = DB(wave - 10 * original) - db_original
-			
-
+			l2_norm = torch.norm((wave - scaling_factor * original), p=2).pow(2)
+			db_x  = DB(noise_model.noise) - db_original
 			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
-			if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2:				
-				loss =  db_weight * (db_x - tau)+ l2_norm * l2_weight
+
+			if l2_norm.item() < 0.6:
+				l2_norm = 1000 / l2_norm
+				loss = l2_norm 
+				# + 0.5 * ctc_loss
+			elif decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2:				
+				loss =  db_weight * (db_x - tau)+ l2_norm.clamp(min=1) * l2_weight
 			elif db_x.item() < tau :  
 				loss = ctc_loss_weight * ctc_loss 
 			else:
-				loss =  10 * (db_x  - tau)  + 0.5 * ctc_loss
+				loss =  10 * (db_x  - tau)  + ctc_loss_weight * ctc_loss
 			model.zero_grad()
 			loss_value = loss.item()
 			optimizer_noise.zero_grad()
@@ -245,24 +247,20 @@ for i in range(len(audios)):
 				    scaled_loss.backward()
 			else:
 				loss.backward()
-			# print(loss)
 			if torch.isnan(loss).any():
 				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
 				assert not torch.isnan(loss).any()
-			# print(float_out.shape , targets.shape, output_sizes,target_sizes )
-			torch.nn.utils.clip_grad_value_(model.parameters(), 10)
-			torch.nn.utils.clip_grad_value_(noise_model.parameters(), 10)
-			# pdb.set_trace()
+			# torch.nn.utils.clip_grad_value_(model.parameters(), 10)
+			# torch.nn.utils.clip_grad_value_(noise_model.parameters(), 10)
 			optimizer_noise.step()
 			if j % 10 == 0 :
-				ctc_loss_weight = ctc_loss_weight / 1.05 
 				wave = noise_model(original, no_noise=True)
 				wave = wave.to(device)
 				wave = wave.unsqueeze(0)
 				decoded_output, decoded_offsets = output(wave)
 				temp_audio = wave.view(-1).cpu().detach().numpy()
 				
-				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
+				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : 1/{}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
 				print("decoded_output: %s"%(decoded_output[0][0]))
 
 				wave2 = noise_model(original, check=True)
@@ -279,16 +277,17 @@ for i in range(len(audios)):
 					wavfile.write('yey_1%s.wav'%(args.out_name),16000,temp_audio )
 
 					torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
-					if ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase:
+					if (ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase) and db_x.item() < tau :
 						noise_model.factor += 5
+						tau = tau - 5
 
 					if decoded_output[0][0] == target_phrase:
 						count +=1 
 						if count >= thresold:
 							break	 
-				for g in optimizer_noise.param_groups:
-				    g['lr'] = g['lr'] / 1.05
 				if loss_value < prev and loss_value > prev -0.5:
+					for g in optimizer_noise.param_groups:
+					    g['lr'] = g['lr'] / 1.05
 					count += 1
 					prev = loss_value
 					if count > thresold :
@@ -298,10 +297,11 @@ for i in range(len(audios)):
 				# 	torch.save(noise_model.state_dict(), "temp_noise%s.pth"%(args.out_name))
 
 
-
 # print('Learning rate annealed to: {lr:.6f}'.format(lr=g['lr']))
 
 # python main2.py -t "test is a test" --out-name=0  --db-weight=100 --l2-weight=0 
 
 # python main.py -x=[/scratch/pp1953/short-audio/1.wav,/scratch/pp1953/short-audio/2.wav,/scratch/pp1953/short-audio/3.wav] -t "test"
 
+
+# python main2.py -t "test is a test" --out-name=0  --ctc-weight=10 --db-weight=0.5 --l2-weight=1 
