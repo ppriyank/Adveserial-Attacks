@@ -4,7 +4,7 @@ import os
 import json 
 from apex import amp
 from scipy.io import wavfile
-
+import sys
 
 import torch
 import torch.nn as nn
@@ -24,7 +24,7 @@ parser.add_argument('-x', '--input-audio-paths', type=list, default=[c for c in 
 parser.add_argument('-mp', '--model-path', type=str, default="saved_model/librispeech_pretrained_v2.pth")
 parser.add_argument('-gpu', '--gpu-devices', type=str, default="0")
 parser.add_argument('-out', '--out-name', type=str, default="0")
-parser.add_argument('--num-iterations', type=int, default=10000)
+parser.add_argument('--num-iterations', type=int, default=2000)
 parser.add_argument('--ctc-weight', type=float, default=1)
 parser.add_argument('--l2-weight', type=float, default=0.005)
 parser.add_argument('--db-weight', type=float, default=0.05)
@@ -33,13 +33,13 @@ args = parser.parse_args()
 
 
 import pdb 
-thresold = 2
-thresold_2 = 0.5
+thresold = 5
+thresold_2 = 3
 # ctc_loss_weight = 0.0005
 ctc_loss_weight = args.ctc_weight
 l2_weight = args.l2_weight
 db_weight = args.db_weight
-scaling_factor = 5
+scaling_factor = 10
 
 # print(args)
 args.input_audio_paths = ("".join(args.input_audio_paths[1:-1])).split(",")
@@ -121,7 +121,7 @@ class Noise_model(nn.Module):
         data_energy = (scaling_factor**2) * (original.view(-1) * original.view(-1)).sum() 
         # noise_level = np.random.uniform(noise_levels)[1]
         noise_level = self.rescale
-        noise = noise_level * noise * data_energy / noise_energy
+        noise = (noise_level **2) * noise * data_energy / noise_energy
 
         pass_in = new_input +  noise 
         pass_in = torch.clamp(pass_in , min=-2**15, max=2**15-1)
@@ -201,6 +201,8 @@ for i in range(len(audios)):
 	targets = torch.tensor(int_transcript , dtype= torch.int32 )
 	target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
 	db_original = DB(original * scaling_factor )
+	# l2_norm = torch.norm((original), p=2).pow(2)
+
 	for k in range(20) :
 		count  = 0
 		prev = 100
@@ -210,9 +212,10 @@ for i in range(len(audios)):
 		wave2 = wave2.unsqueeze(0)
 		decoded_output2, decoded_offsets2 = output(wave2)
 		temp_audio2 = wave2.view(-1).cpu().detach().numpy()
+		print("============= Epoch Change")
 		print("decoded_output2: %s"%(decoded_output2[0][0]))								
 		wavfile.write('yey_1%s.wav'%(args.out_name),16000,temp_audio2 )
-
+		scaling_factor = max(scaling_factor - 1 , 1)
 		# tau = tau - 5 
 		# noise_model.factor +=10
 		for j in range(args.num_iterations):
@@ -222,11 +225,11 @@ for i in range(len(audios)):
 			magnitude, phase = stft.transform(wave)
 			magnitude = magnitude.unsqueeze(0)
 			magnitude = magnitude.to(device)
-			# magnitude = magnitude.clamp(min=1e-12, max=1.0)
+
 			temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
 			mean = temp.mean()
 			std = temp.std()
-			temp = (temp - mean) / (std + 1e-6)
+			temp = (temp - mean + 1e-6 ) / (std + 1e-6)
 			input_sizes = torch.IntTensor([temp.size(3)]).int()
 			out, output_sizes = model(temp, input_sizes)
 			decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
@@ -238,16 +241,16 @@ for i in range(len(audios)):
 			db_x  = DB(noise_model.noise) - db_original
 			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
 
-			if l2_norm.item() < 0.6:
-				l2_norm = 1000 / l2_norm
-				loss = l2_norm 
+			# if l2_norm.item() < 0.6:
+			# 	l2_norm = 1000 / l2_norm
+			# 	loss = l2_norm 
 				# + 0.5 * ctc_loss
-			elif decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2:				
-				loss =  db_weight * (db_x - tau)+ l2_norm.clamp(min=1) * l2_weight
-			elif db_x.item() < tau :  
-				loss = ctc_loss_weight * ctc_loss 
+			# elif decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2:				
+			# 	loss =  db_weight * (db_x - tau)+ l2_norm.clamp(min=1) * l2_weight + 0.0005 * ctc_loss
+			if db_x.item() < tau :  
+				loss = 10 * ctc_loss_weight * ctc_loss + db_weight* (db_x  - tau) + l2_norm * l2_weight
 			else:
-				loss =  db_weight * (db_x  - tau)  + ctc_loss_weight * ctc_loss
+				loss = 10 * db_weight * (db_x  - tau)  + ctc_loss_weight * ctc_loss + l2_norm * l2_weight
 			model.zero_grad()
 			loss_value = loss.item()
 			optimizer_noise.zero_grad()
@@ -256,11 +259,9 @@ for i in range(len(audios)):
 				    scaled_loss.backward()
 			else:
 				loss.backward()
-			if torch.isnan(loss).any():
-				print("count= {} k={} Epoch {} L2 norm {} DB Loss: {:.6f} CTC Loss {:.6f} , tau {} Noise_factor : {}".format(count, k, j, l2_norm.item(),  db_x.item(), ctc_loss.item() ,tau, noise_model.factor))
-				assert not torch.isnan(loss).any()
-			# torch.nn.utils.clip_grad_value_(model.parameters(), 10)
-			# torch.nn.utils.clip_grad_value_(noise_model.parameters(), 10)
+			if torch.isnan(noise_model.noise.grad).any():
+				noise_model.noise.grad[torch.isnan(noise_model.noise.grad)] = 0
+				
 			optimizer_noise.step()
 			if j % 10 == 0 :
 				wave = noise_model(original, no_noise=True)
@@ -274,9 +275,15 @@ for i in range(len(audios)):
 
 				
 				if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2 :
-					# numpy_to_req_wav(audio_file_name='yey_1%s.wav'%(args.out_name) , audio_np=temp_audio)
-					# numpy_to_req_wav(audio_file_name='yey%s.wav'%(args.out_name) , audio_np=temp_audio)
 					wavfile.write('yey_0%s.wav'%(args.out_name),16000,temp_audio2)
+					
+					wave2 = noise_model(original)
+					wave2 = wave2.to(device)
+					wave2 = wave2.unsqueeze(0)
+					decoded_output2, decoded_offsets2 = output(wave2)
+					temp_audio2 = wave2.view(-1).cpu().detach().numpy()
+					print("decoded_output: %s"%(decoded_output2[0][0]))
+					wavfile.write('yey_2%s.wav'%(args.out_name),16000,temp_audio2 )
 					
 
 					torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
@@ -288,7 +295,7 @@ for i in range(len(audios)):
 						count +=1 
 						if count >= thresold:
 							break	 
-				if loss_value < prev and loss_value > prev -0.5:
+				if loss_value < prev and loss_value > prev -0.10:
 					for g in optimizer_noise.param_groups:
 					    g['lr'] = g['lr'] / 1.05
 					count += 1
@@ -307,4 +314,5 @@ for i in range(len(audios)):
 # python main.py -x=[/scratch/pp1953/short-audio/1.wav,/scratch/pp1953/short-audio/2.wav,/scratch/pp1953/short-audio/3.wav] -t "test"
 
 
-# python main2.py -t "test is a test" --out-name=0  --ctc-weight=10 --db-weight=0.5 --l2-weight=1 
+# python main2.py -t "test is a test" --out-name=0  --ctc-weight=10 --db-weight=0.5 --l2-weight=0.0005
+# python main2.py -t "test is a test" --out-name=0  --ctc-weight=1 --db-weight=1 --l2-weight=0.0005
