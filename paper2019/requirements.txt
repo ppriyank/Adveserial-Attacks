@@ -1,0 +1,6 @@
+torchaudio
+visdom
+wget
+librosa
+torch-stft
+
