@@ -34,8 +34,9 @@ parser.add_argument('--folder', type=str, default="attacked/")
 args = parser.parse_args()
 
 
-thresold = 5
+thresold = 1
 thresold_2 = 3
+thresold_3 = 3
 # ctc_loss_weight = 0.0005
 ctc_loss_weight = args.ctc_weight
 l2_weight = args.l2_weight
@@ -84,6 +85,20 @@ win_length = n_fft
 hop_length = int(sample_rate * window_stride)
 stft = STFT(filter_length=n_fft,  hop_length=hop_length, win_length=win_length,window='hamming').to(device)
 
+
+
+
+
+from thresold import thresold
+thresold_calc = thresold()
+
+
+
+
+
+
+
+
 final_deltas = [None] * len(audios)
 model.to(device)
 
@@ -109,7 +124,7 @@ class Noise_model(nn.Module):
         self.rescale = 1
         self.batch_size = batch_size
         self.factor  = 1
-    def forward(self, original, debug= False, no_noise= False):
+    def forward(self, original, debug= False, no_noise= False ):
         if debug == True:
         	return original
         apply_delta = torch.clamp(self.noise, min=-2000, max=2000)*self.rescale
@@ -137,27 +152,18 @@ def DB(x):
 
 def compute_PSD_matrix(original):
 	magnitude, phase = stft.transform(original)
-	# win = np.sqrt(8.0/3.) * magnitude 
-    z = abs(magnitude / win_length)
-    # psd_max = torch.max(z*z)
-    psd = 10 * torch.log(z * z + 0.0000000000000000001) / torch.log(torch.tensor(10.0))
-    return psd
+	magnitude = np.sqrt(8.0/3.) * magnitude 
+	N = win_length
+	z = torch.abs(magnitude / N)
+	psd = 10 * torch.log(z * z + 0.0000000000000000001) / torch.log(torch.tensor(10.0))
+	return psd
 
 
-def l_theta_loss(original, delta, thresold= 100):
-	
+def l_theta_loss(original, delta, thresold= -100):
 	psd_org = compute_PSD_matrix(original)
 	psd_delta = compute_PSD_matrix(delta)
 	PSD = 96 - torch.max(psd_org) + psd_delta 
-	PSD - thresold 
-
-	magnitude, phase = stft.transform(wave)
-	# win = np.sqrt(8.0/3.) * magnitude 
-    z = abs(magnitude / win_length)
-    psd_max = torch.max(z*z)
-    psd = 10 * torch.log(z * z + 0.0000000000000000001) / torch.log(torch.tensor(10.0))
-    PSD = 96 - torch.max(psd) + psd 
-    return PSD, psd_max   
+	return torch.mean(torch.relu(PSD-thresold)) 
 
 
 
@@ -184,19 +190,21 @@ for i in range(len(audios)):
 	print("processing %d-th audio (%s)" %(i+1, args.input_audio_paths[i]))
 	maxlen =lengths[i]
 	noise_model = Noise_model(1,maxlen, cuda)
-
 	transcript_path = args.input_audio_paths[i][:-3] + "txt"
 	with open(transcript_path, 'r', encoding='utf8') as transcript_file:
 		transcript = transcript_file.read().replace('\n', '')
 	print(transcript)
 	audio = audios[i]
+	thresold =  thresold_calc (audio)
+	import pdb 
+	pdb.set_trace()
 	original = torch.FloatTensor(audio).to(device)
 	original.requires_grad= False
 	original = original.unsqueeze(0)
-	# original = nn.functional.normalize(original, p=2, dim=1)
+	original = nn.functional.normalize(original, p=2, dim=1)
 	decoded_output, decoded_offsets  = output(original)
 	int_transcript = list(filter(None, [labels_map.get(x) for x in list(target_phrase)]))
-	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=0.01, weight_decay=0.1)
+	
 	# optimizer_noise = torch.optim.SGD(noise_model.parameters(), lr=0.01, momentum=0, nesterov=False)
 	if cuda:
 		noise_model, optimizer_noise = amp.initialize(noise_model, optimizer_noise,
@@ -204,7 +212,10 @@ for i in range(len(audios)):
 	targets = torch.tensor(int_transcript , dtype= torch.int32 )
 	target_sizes = torch.tensor([len(target_phrase)] , dtype= torch.int32)
 	db_original = DB(original * scaling_factor)
-	tau = 2
+	tau = 10
+	lr = 0.01
+	lr2 = 0.01
+	optimizer_noise = torch.optim.Adam(noise_model.parameters(), lr=lr, weight_decay=0.1)
 	for k in range(10) :
 		orig_sound , delta = noise_model(original, no_noise=True)
 		wave2  = torch.clamp(orig_sound +  delta , min=-2**15, max=2**15-1)
@@ -218,22 +229,22 @@ for i in range(len(audios)):
 		wavfile.write( folder +  '%s.wav'%(args.out_name),16000,temp_audio2 )
 		# scaling_factor = max(scaling_factor - 1 , 1)
 		prev1 = 100 
-		prev2 = 100 
+		prev2 = 100
+		prev3=100 
 		ctc_loss_weight = args.ctc_weight
 		db_weight = min(db_weight , 20) 
-		tau = tau - 3
+		tau = tau / 2
 		noise_model.factor = 10
 		# noise_model.factor = min(60)
+		# stage 1
 		for j in range(args.num_iterations):
 			orig_sound , delta = noise_model(original)
 			wave  = torch.clamp(orig_sound +  delta , min=-2**15, max=2**15-1)
-			wave = noise_model(original)
 			wave = wave.to(device)
 			wave = wave.unsqueeze(0)
 			magnitude, phase = stft.transform(wave)
 			magnitude = magnitude.unsqueeze(0)
 			magnitude = magnitude.to(device)
-
 			temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
 			mean = temp.mean()
 			std = temp.std()
@@ -241,26 +252,15 @@ for i in range(len(audios)):
 			input_sizes = torch.IntTensor([temp.size(3)]).int()
 			out, output_sizes = model(temp, input_sizes)
 			decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
-			
 			out = out.transpose(0, 1)  # TxNxH
 			float_out = out.float()  # ensure float32 for loss
-			
-			l2_norm = torch.norm((wave - scaling_factor * original), p=2).pow(2)
-			db_x  = DB(noise_model.noise) - db_original
-			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
-
-			if db_x.item() < tau :  
-				loss = 10 * ctc_loss_weight * ctc_loss + 0.005 * (db_x  - tau) + l2_norm * db_weight
-			else:
-				loss = 10 * 0.005 * (db_x  - tau)  + ctc_loss_weight * ctc_loss + l2_norm * db_weight * 10 
-			# if db_x.item() < tau :  
-			# 	loss = 10 * ctc_loss_weight * ctc_loss + db_weight * (db_x  - tau) + l2_norm * l2_weight
-			# else:
-			# 	loss = 10 * db_weight * (db_x  - tau)  + ctc_loss_weight * ctc_loss + l2_norm * l2_weight * 10 
-
 			model.zero_grad()
-			loss_value = loss.item()
 			optimizer_noise.zero_grad()
+			l2_norm = torch.norm((wave - scaling_factor * original), p=2).pow(2)
+			db_x = torch.max(noise_model.noise) - tau
+			ctc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
+			loss = ctc_loss 
+			loss_value = loss.item()
 			if use_gpu:
 				with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
 				    scaled_loss.backward()
@@ -268,49 +268,97 @@ for i in range(len(audios)):
 				loss.backward()
 			if torch.isnan(noise_model.noise.grad).any():
 				noise_model.noise.grad[torch.isnan(noise_model.noise.grad)] = 0.0001
-			
-			optimizer_noise.step()
-			if j % 10 == 0 :
-				orig_sound , delta = noise_model(original ,no_noise=True)
-				wave = torch.clamp(orig_sound +  delta , min=-2**15, max=2**15-1)
+			noise_model.noise = torch.clamp( noise_model.noise - lr * torch.sign(noise_model.noise.grad)  , min=-tau , max=tau)
+			if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2 :
+				ctc_loss_weight = max(ctc_loss_weight - 0.1, 0.05)
+				db_weight += 0.2
+			else:
+				ctc_loss_weight += 0.05
+
+			if db_x.item() < prev1:
+				prev1 = db_x.item()
+				wavfile.write(folder +  '1_%s.wav'%(args.out_name),16000,temp_audio)
+				torch.save(noise_model.state_dict(), folder + 'noise_1_%s.pth'%(args.out_name ) )
+			if l2_norm.item() < prev2:
+				prev2 = l2_norm.item()
+				wavfile.write(folder + '2_%s.wav'%(args.out_name ),16000,temp_audio2 )
+				torch.save(noise_model.state_dict(), folder + 'noise_2_%s.pth'%(args.out_name ) )
+			if ctc_loss.item() < prev3:
+				prev3 = ctc_loss.item()
+				wavfile.write(folder + '3_%s.wav'%(args.out_name ),16000,temp_audio2 )
+				torch.save(noise_model.state_dict(), folder + 'noise_3_%s.pth'%(args.out_name ) )
+				wave = noise_model(original, no_noise=True)
 				wave = wave.to(device)
 				wave = wave.unsqueeze(0)
-				decoded_output, decoded_offsets = output(wave)
 				temp_audio = wave.view(-1).cpu().detach().numpy()
-				
+				wavfile.write(folder + '4_%s.wav'%(args.out_name ),16000,temp_audio2 )
+			if (ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase):
+				lr = lr / 1.05
+				break 
+			if j % 20 == 0 :
 				print("k={} L2 norm {} DB Loss: {:.6f}/{} CTC Loss {:.6f} . Noise_factor : 1/{} ctc_loss_weight {} , db_weight {} ".format(k, l2_norm.item(),  db_x.item(), tau, ctc_loss.item(), noise_model.factor, ctc_loss_weight ,db_weight))
 				print("decoded_output: %s"%(decoded_output[0][0]))
+		alpha = 0.05	
+		# stage 2
+		prev1 = 100 
+		for j in range(args.num_iterations):
+			orig_sound , delta = noise_model(original)
+			wave  = torch.clamp(orig_sound +  delta , min=-2**15, max=2**15-1)
+			wave = wave.to(device)
+			wave = wave.unsqueeze(0)
+			magnitude, phase = stft.transform(wave)
+			magnitude = magnitude.unsqueeze(0)
+			magnitude = magnitude.to(device)
+			temp = torch.log(magnitude + 1).clamp(min=1e-12, max=1.0)
+			mean = temp.mean()
+			std = temp.std()
+			temp = (temp - mean + 1e-6 ) / (std + 1e-6)
+			input_sizes = torch.IntTensor([temp.size(3)]).int()
+			out, output_sizes = model(temp, input_sizes)
+			decoded_output, decoded_offsets = decoder.decode(out, output_sizes)
+			out = out.transpose(0, 1)  # TxNxH
+			float_out = out.float()  # ensure float32 for loss
+			model.zero_grad()
+			optimizer_noise.zero_grad()
 
+			tc_loss = criterion(softmax(float_out).cpu(), targets, output_sizes, target_sizes).to(device).clamp(min=-400.0 , max=400.0)
+			psd_loss = l_theta_loss(orig_sound , delta)
+			loss = ctc_loss + alpha * psd_loss
+			loss_value = loss.item()
+			if use_gpu:
+				with amp.scale_loss(loss, optimizer_noise) as scaled_loss:
+				    scaled_loss.backward()
+			else:
+				loss.backward()
+			if torch.isnan(noise_model.noise.grad).any():
+				noise_model.noise.grad[torch.isnan(noise_model.noise.grad)] = 0.0001
+			noise_model.noise =  noise_model.noise - lr2 * torch.sign(noise_model.noise.grad) 
+			
+			if j % 20 == 0: 
 				if decoded_output[0][0] == target_phrase or ctc_loss.item() < thresold_2 :
-					# wavfile.write(folder +  '1_%s_%d.wav'%(args.out_name,j),16000,temp_audio)
-					orig_sound , delta = noise_model(original ,no_noise=True)
-					wave2 = noise_model(original)
-					wave2 = wave2.to(device)
-					wave2 = wave2.unsqueeze(0)
-					decoded_output2, decoded_offsets2 = output(wave2)
-					temp_audio2 = wave2.view(-1).cpu().detach().numpy()
-					print("decoded_output: %s"%(decoded_output2[0][0]))
-					# wavfile.write(folder + '2_%s_%d.wav'%(args.out_name, j ),16000,temp_audio2 )
-					if db_x.item() < prev1:
-						prev1 = db_x.item()
-						wavfile.write(folder +  '1_%s.wav'%(args.out_name),16000,temp_audio)
-						torch.save(noise_model.state_dict(), folder + 'noise_1_%s.pth'%(args.out_name ) )
-					if l2_norm.item() < prev2:
-						prev2 = l2_norm.item()
-						wavfile.write(folder + '2_%s.wav'%(args.out_name ),16000,temp_audio2 )
-						torch.save(noise_model.state_dict(), folder + 'noise_2_%s.pth'%(args.out_name ) )
+					alpha = alpha + 0.005
+				print("k={} psd_loss {} CTC Loss {:.6f}  alpha {} ".format(k, psd_loss.item(),  ctc_loss.item(), alpha))
+				print("decoded_output: %s"%(decoded_output[0][0]))
+			if j % 50:
+				if  ctc_loss.item() > thresold_2 :
+					alpha = alpha - 0.009
+					alpha = max(0, alpha)
+				if (ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase):
+					lr2 = lr2 / 1.05
+			
+			if loss_value < prev1 :
+				prev1 = loss_value
+				temp_audio = wave.view(-1).cpu().detach().numpy()
+				wavfile.write(folder +  '5_%s.wav'%(args.out_name),16000,temp_audio)
+				torch.save(noise_model.state_dict(), folder + 'noise_5_%s.pth'%(args.out_name ) )
+				if loss_value < thresold:
+					break 
+					
+	
+					
+					
 
-					if decoded_output[0][0] == target_phrase:
-						# noise_model.factor += 5
-						ctc_loss_weight = max(ctc_loss_weight - 0.1, 0.05)
-						db_weight += 0.2
-		
-					if (ctc_loss.item() < thresold_2 or decoded_output[0][0] == target_phrase) and db_x.item() < tau :
-						# torch.save(noise_model.state_dict(), "yey_noise%s.pth"%(args.out_name))
-						for g in optimizer_noise.param_groups:
-							g['lr'] = g['lr'] / 1.05
-						break
-
+					
 					
 
 
