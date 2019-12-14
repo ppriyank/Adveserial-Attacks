@@ -11,6 +11,8 @@ This is a Tensorflow implementation for the ICML 2019 paper ["Imperceptible, Rob
 *   Cython (```pip install Cython```),
 *   pyroomacoustics (```pip install pyroomacoustics```).
 
+However, no need to install these if using the modified version of `dev.dockerfile`.
+
 ## Data 
 Here we provide 10 audios from LibriSpeech test-clean dataset as an example to show how to run the codes. Please refer to [Lingvo](https://github.com/tensorflow/lingvo/tree/master/lingvo/tasks/asr/tools) or [Librispeech website](http://www.openslr.org/resources/12/) to download the whole test set.
 
@@ -32,7 +34,6 @@ git checkout icml
 ```
 Then you need to compile the lingvo system. The easiest way to build [Lingvo system](https://github.com/tensorflow/lingvo) is to use the [docker](https://docs.docker.com/install/linux/docker-ce/ubuntu/). Here we place the folder ```lingvo/``` and ```lingvo_compiled/``` under the root directory ```~/```. If you change their locations, you need to make corresponding changes in the following commands.
 
-
 ```bash
 cd ..
 mkdir lingvo_compiled
@@ -52,6 +53,38 @@ sudo chown -R $USER ~/lingvo_compiled
 export PYTHONPATH=$PYTHONPATH:~/lingvo_compiled
 ```
 The folder ```lingvo/``` in the directory ```lingvo_compiled/``` needs to be placed in the directory ```./adversarial_asr/```. Then this directory becomes ```./adversarial_asr/lingvo/```.
+
+However, if you want to run this container on NYU prince. Please follow the following instruction to build the docker image on your own machine.
+
+```bash
+sudo docker build --no-cache --tag username/tensorflow:lingvo --build-arg base_image=nvidia/cuda:10.0-cudnn7-runtime-ubuntu16.04 - < lingvo/dev.dockerfile
+docker push username/tensorflow:lingvo
+```
+
+Our docker image is accessed at `xinyi329/tensorflow:lingvo`.
+
+In order to build the docker image as singularity image, please follow commands below on NYU Prince.
+
+```bash
+singularity pull docker://xinyi329/tensorflow:lingvo
+singularity build tensorflow_lingvo.simg tensorflow_lingvo.sif
+```
+
+The following commands runs a singularity container and you got a shell from that.
+
+```bash
+singularity shell --nv tensorflow_lingvo.simg
+```
+
+In order to build lingvo system, run the singularity with above command, and type the following within the container.
+
+```bash
+cd ~/lingvo
+bazel build -c opt --config=cuda //lingvo:trainer
+cp -rfL bazel-bin/lingvo/trainer.runfiles/__main__/lingvo ~/adversarial_asr/
+```
+
+You may need to move the `lingvo_compiled/` folder under the cloned the `adversarial_asr` repo.
 
 ## Imperceptible Adversarial Examples
 
